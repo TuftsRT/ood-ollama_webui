@@ -1,5 +1,7 @@
-<form action="/node/<%= host %>/<%= port %>">
-  <button class="btn btn-primary" type="submit">
-    <i class="fa fa-eye"></i> Connect to webui
-  </button>
-</form>
+<% 
+  url = "http://#{host}\.pax\.tufts\.edu:#{port}"
+%>
+
+<a class="btn btn-primary" href="<%= url %>" target="_blank">
+  <i class="fa fa-eye"></i> Connect to Ollama
+</a>
