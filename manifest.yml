@@ -1,7 +1,7 @@
 ---
-name: "Ollama + Open WebUI"
+name: "Research Chatbot (LLMs)"
 category: "Interactive Apps"
 subcategory: "AI"
 role: "batch_connect"
 description: |
-  This app launches an instance of [Ollama](https://ollama.com/) with [Open-WebUI](https://github.com/open-webui/open-webui) as the interface, enabling users to run language models on the Tufts HPC system.
+  The Research Chatbot provides a chat interface to open-source large language models (LLMs), similar to ChatGPT, making it easy to explore generative AI models without coding. This is meant for beginners and educators who want to experiment with conversational models for classroom or research use. This tool not meant for personal use. You can find more information on the models available [here](https://tufts.box.com/v/ResearchChatbotModels).
