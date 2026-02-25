@@ -35,6 +35,15 @@ attributes:
     favorites:
       - /cluster/tufts
       - /cluster/home
+  
+  disclaimer_block:
+    widget: text_field
+    class: "d-none"
+    skip_label: true
+<% if File.exist?("/etc/ood/config/apps/dashboard/batch_connect/partials/ai_disclaimer.md")  %>
+    help: |
+<%= File.read("/etc/ood/config/apps/dashboard/batch_connect/partials/ai_disclaimer.md").indent(11) %>
+<%end%>
 
   ta_qos:
     widget: check_box
@@ -45,6 +54,7 @@ attributes:
     unchecked_value: "normal"
 
 form:
+  - disclaimer_block
   - bc_num_hours
   - num_cores
   - num_memory
