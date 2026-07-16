@@ -2,23 +2,54 @@
 set -euo pipefail
 
 # ================================
-# Configuration
+# Configuration from Open OnDemand
 # ================================
+VER="<%= context.version %>"
 MODELDIR="<%= context.modeldir %>"
 DATA_DIR="<%= context.datadir %>"
-VER="<%= context.version %>"
-OLLAMA_SIF="/cluster/tufts/ngc/images/ollama_${VER}.sif"
-WEBUI_SIF="/cluster/tufts/ngc/images/open-webui_0.6.22.sif"
-WEBUI_PORT=$port
 
-# Trim whitespace and check if DATA_DIR is empty or unset
-if [ -z "$(echo "$DATA_DIR" | xargs)" ]; then
+WEBUI_SIF="/cluster/tufts/ngc/images/open-webui_${VER}-ollama.sif"
+SEARXNG_SIF="/cluster/tufts/ngc/images/searxng_2026.7.9.sif"
+WEBUI_PORT="$port"
+
+# ================================
+# Clean input values and set defaults
+# ================================
+VER="$(echo "${VER:-}" | xargs)"
+MODELDIR="$(echo "${MODELDIR:-}" | xargs)"
+DATA_DIR="$(echo "${DATA_DIR:-}" | xargs)"
+
+if [[ -z "$VER" ]]; then
+    VER="0.10.2"
+fi
+
+if [[ -z "$MODELDIR" ]]; then
+    MODELDIR="${HOME}/ollama"
+fi
+
+if [[ -z "$DATA_DIR" ]]; then
     DATA_DIR="${HOME}/open-webui/data"
 fi
 
-mkdir -p "$DATA_DIR"
+# Host-side paths
+HOST_MODEL_DIR="$MODELDIR"
+HOST_DATA_DIR="$DATA_DIR"
+HOST_SEARXNG_DIR="${HOST_DATA_DIR}/searxng"
+HOST_SEARXNG_CACHE_DIR="${HOST_DATA_DIR}/searxng-cache"
 
-KEY_FILE="${DATA_DIR}/.webui_secret_key"
+# Container-side paths
+CONTAINER_MODEL_DIR="/root/.ollama"
+CONTAINER_DATA_DIR="/app/backend/data"
+CONTAINER_SEARXNG_DIR="/etc/searxng"
+CONTAINER_SEARXNG_CACHE_DIR="/var/cache/searxng"
+
+mkdir -p "$HOST_MODEL_DIR"
+mkdir -p "$HOST_DATA_DIR"
+mkdir -p "$HOST_SEARXNG_DIR"
+mkdir -p "$HOST_SEARXNG_CACHE_DIR"
+
+KEY_FILE="${HOST_DATA_DIR}/.webui_secret_key"
+SEARXNG_SETTINGS_FILE="${HOST_SEARXNG_DIR}/settings.yml"
 
 # ================================
 # Functions
@@ -39,58 +70,233 @@ my_find_port() {
     return 1
 }
 
+cleanup() {
+    echo "🧹 Cleaning up Open WebUI session..."
+
+    if [[ -n "${searxng_pid:-}" ]] && kill -0 "$searxng_pid" 2>/dev/null; then
+        echo "Stopping SearXNG process: $searxng_pid"
+        kill "$searxng_pid" 2>/dev/null || true
+        wait "$searxng_pid" 2>/dev/null || true
+    fi
+}
+
+trap cleanup EXIT INT TERM
+
 # ================================
 # Environment Setup
 # ================================
 module purge
-module load apptainer
-#module load miniforge
+module load singularity
 module list
 
-mkdir -p "$DATA_DIR"
+echo "================================"
+echo "Open WebUI + Bundled Ollama + SearXNG"
+echo "================================"
+echo "VERSION:                    $VER"
+echo "HOST_MODEL_DIR:             $HOST_MODEL_DIR"
+echo "HOST_DATA_DIR:              $HOST_DATA_DIR"
+echo "HOST_SEARXNG_DIR:           $HOST_SEARXNG_DIR"
+echo "HOST_SEARXNG_CACHE_DIR:     $HOST_SEARXNG_CACHE_DIR"
+echo "CONTAINER_MODEL_DIR:        $CONTAINER_MODEL_DIR"
+echo "CONTAINER_DATA_DIR:         $CONTAINER_DATA_DIR"
+echo "CONTAINER_SEARXNG_DIR:      $CONTAINER_SEARXNG_DIR"
+echo "CONTAINER_SEARXNG_CACHE:    $CONTAINER_SEARXNG_CACHE_DIR"
+echo "WEBUI_SIF:                  $WEBUI_SIF"
+echo "SEARXNG_SIF:                $SEARXNG_SIF"
+echo "WEBUI_PORT:                 $WEBUI_PORT"
+echo "HOSTNAME:                   $(hostname)"
+echo "================================"
+
+if [[ ! -f "$WEBUI_SIF" ]]; then
+    echo "❌ Open WebUI SIF not found: $WEBUI_SIF"
+    exit 1
+fi
+
+if [[ ! -f "$SEARXNG_SIF" ]]; then
+    echo "❌ SearXNG SIF not found: $SEARXNG_SIF"
+    exit 1
+fi
 
 # ================================
-# Launch Ollama Backend
+# Prepare Open WebUI Secret Key
 # ================================
-ollama_port=$(my_find_port)
-if [[ -z "$ollama_port" ]]; then
+if [[ ! -f "$KEY_FILE" ]]; then
+    echo "🔐 Generating WEBUI_SECRET_KEY"
+    openssl rand -hex 32 > "$KEY_FILE"
+    chmod 600 "$KEY_FILE"
+fi
+
+WEBUI_SECRET_KEY="$(cat "$KEY_FILE")"
+
+# ================================
+# Choose unique ports for this OOD job
+# ================================
+OLLAMA_PORT="$(my_find_port)"
+SEARXNG_PORT="$(my_find_port)"
+
+if [[ -z "$OLLAMA_PORT" ]]; then
     echo "❌ Could not allocate a port for Ollama"
     exit 1
 fi
 
-export OLLAMA_HOST="127.0.0.1:${ollama_port}"
-export OLLAMA_MODELS="$MODELDIR"
-
-echo "📡 OLLAMA_HOST: $OLLAMA_HOST"
-echo "📁 OLLAMA_MODELS: $OLLAMA_MODELS"
-
-singularity run \
-    --nv \
-    --env "OLLAMA_HOST=$OLLAMA_HOST" \
-    --env "OLLAMA_MODELS=$OLLAMA_MODELS" \
-    "$OLLAMA_SIF" &
-
-ollama_pid=$!
-
-#
-sleep 20
-
-# ================================
-# Prepare WebUI Key
-# ================================
-if [[ ! -f "$KEY_FILE" ]]; then
-    echo "Generating WEBUI_SECRET_KEY"
-    head -c 12 /dev/random | base64 > "$KEY_FILE"
+if [[ -z "$SEARXNG_PORT" ]]; then
+    echo "❌ Could not allocate a port for SearXNG"
+    exit 1
 fi
-export WEBUI_SECRET_KEY=$(cat "$KEY_FILE")
 
 # ================================
-# Start Open WebUI Frontend
+# Prepare SearXNG settings
 # ================================
-export OLLAMA_API_BASE_URL="http://127.0.0.1:${ollama_port}"
-export DATA_DIR="$DATA_DIR"
+if [[ ! -f "$SEARXNG_SETTINGS_FILE" ]]; then
+    echo "🔧 Creating SearXNG settings.yml"
 
-#conda activate /cluster/tufts/hpc/tools/miniforge3/envs/envs/open-webui_0.6.5/
+    SEARXNG_SECRET_KEY="$(openssl rand -hex 32)"
 
-echo "🚀 Starting Open WebUI on port $WEBUI_PORT"
-singularity exec --nv $WEBUI_SIF open-webui serve --port "$WEBUI_PORT"
+    cat > "$SEARXNG_SETTINGS_FILE" <<EOF
+use_default_settings: true
+
+server:
+  bind_address: "127.0.0.1"
+  port: 8888
+  secret_key: "${SEARXNG_SECRET_KEY}"
+
+search:
+  formats:
+    - html
+    - json
+EOF
+
+    chmod 600 "$SEARXNG_SETTINGS_FILE"
+else
+    echo "✅ Using existing SearXNG settings.yml"
+fi
+
+# ================================
+# Start SearXNG Web Search Backend
+# ================================
+echo "🔎 Starting SearXNG"
+echo "🔎 SearXNG port:      $SEARXNG_PORT"
+echo "🔎 SearXNG settings:  $SEARXNG_SETTINGS_FILE"
+
+singularity exec \
+    --bind "$HOST_SEARXNG_DIR:$CONTAINER_SEARXNG_DIR" \
+    --bind "$HOST_SEARXNG_CACHE_DIR:$CONTAINER_SEARXNG_CACHE_DIR" \
+    --env "SEARXNG_BIND_ADDRESS=127.0.0.1" \
+    --env "SEARXNG_PORT=$SEARXNG_PORT" \
+    --env "SEARXNG_SETTINGS_PATH=${CONTAINER_SEARXNG_DIR}/settings.yml" \
+    --env "PYTHONPATH=/usr/local/searxng" \
+    "$SEARXNG_SIF" \
+    /bin/sh -c "
+        cd /usr/local/searxng &&
+        exec /usr/local/searxng/.venv/bin/granian \
+            --interface wsgi \
+            --host 127.0.0.1 \
+            --port ${SEARXNG_PORT} \
+            searx.webapp:application
+    " &
+
+searxng_pid=$!
+
+echo "⏳ Waiting for SearXNG to become ready..."
+
+for i in {1..60}; do
+    if curl -sf "http://127.0.0.1:${SEARXNG_PORT}/search?q=test&format=json" >/dev/null 2>&1; then
+        echo "✅ SearXNG is ready"
+        break
+    fi
+
+    if ! kill -0 "$searxng_pid" 2>/dev/null; then
+        echo "❌ SearXNG process exited early"
+        wait "$searxng_pid" || true
+        echo "Debug commands:"
+        echo "  singularity inspect --runscript $SEARXNG_SIF"
+        echo "  singularity exec $SEARXNG_SIF /bin/sh -c 'find / -maxdepth 4 -type d -name searx 2>/dev/null | head -20'"
+        echo "  singularity exec $SEARXNG_SIF /bin/sh -c 'cd /usr/local/searxng && PYTHONPATH=/usr/local/searxng /usr/local/searxng/.venv/bin/python -c \"import searx; import searx.webapp; print(\\\"OK\\\")\"'"
+        exit 1
+    fi
+
+    sleep 2
+
+    if [[ "$i" -eq 60 ]]; then
+        echo "❌ SearXNG did not become ready after 120 seconds"
+        echo "Try manually checking:"
+        echo "  curl -v http://127.0.0.1:${SEARXNG_PORT}/search?q=test\\&format=json"
+        exit 1
+    fi
+done
+
+# ================================
+# Start Open WebUI + Internal Ollama
+# ================================
+
+# Open WebUI server settings
+export PORT="$WEBUI_PORT"
+export HOST="0.0.0.0"
+
+# Open WebUI data path inside the container
+export DATA_DIR="$CONTAINER_DATA_DIR"
+
+# Tell the bundled Open WebUI image to start Ollama inside the same container
+export USE_OLLAMA_DOCKER="true"
+
+# Internal Ollama settings.
+# Do NOT hardcode 11434 on a shared node.
+export OLLAMA_HOST="127.0.0.1:${OLLAMA_PORT}"
+export OLLAMA_BASE_URL="http://127.0.0.1:${OLLAMA_PORT}"
+export OLLAMA_BASE_URLS="http://127.0.0.1:${OLLAMA_PORT}"
+
+# Ollama model path inside the container
+export OLLAMA_MODELS="${CONTAINER_MODEL_DIR}/models"
+
+# Enable Open WebUI web search through local SearXNG
+export ENABLE_WEB_SEARCH="true"
+export WEB_SEARCH_ENGINE="searxng"
+export SEARXNG_QUERY_URL="http://127.0.0.1:${SEARXNG_PORT}/search?q=<query>"
+
+# Usually false unless your cluster requires HTTP_PROXY/HTTPS_PROXY.
+export WEB_SEARCH_TRUST_ENV="false"
+
+# Avoid stale saved Open WebUI admin config overriding this job's env vars
+export ENABLE_PERSISTENT_CONFIG="False"
+
+# Optional HPC/offline settings
+export ENABLE_VERSION_UPDATE_CHECK="False"
+export SCARF_NO_ANALYTICS="true"
+export DO_NOT_TRACK="true"
+export ANONYMIZED_TELEMETRY="false"
+
+echo "🚀 Starting Open WebUI + Ollama"
+echo "🌐 Open WebUI port:   $WEBUI_PORT"
+echo "📡 Ollama port:       $OLLAMA_PORT"
+echo "📡 Internal Ollama:   $OLLAMA_BASE_URL"
+echo "🔎 SearXNG URL:       http://127.0.0.1:${SEARXNG_PORT}"
+echo "🔎 Query URL:         $SEARXNG_QUERY_URL"
+echo "📁 Host models:       $HOST_MODEL_DIR"
+echo "📁 Host WebUI data:   $HOST_DATA_DIR"
+echo "📁 Container models:  $OLLAMA_MODELS"
+echo "📁 Container WebUI:   $DATA_DIR"
+
+singularity exec \
+    --nv \
+    --bind "$HOST_DATA_DIR:$CONTAINER_DATA_DIR" \
+    --bind "$HOST_MODEL_DIR:$CONTAINER_MODEL_DIR" \
+    --env "PORT=$PORT" \
+    --env "HOST=$HOST" \
+    --env "DATA_DIR=$DATA_DIR" \
+    --env "WEBUI_SECRET_KEY=$WEBUI_SECRET_KEY" \
+    --env "USE_OLLAMA_DOCKER=$USE_OLLAMA_DOCKER" \
+    --env "OLLAMA_HOST=$OLLAMA_HOST" \
+    --env "OLLAMA_BASE_URL=$OLLAMA_BASE_URL" \
+    --env "OLLAMA_BASE_URLS=$OLLAMA_BASE_URLS" \
+    --env "OLLAMA_MODELS=$OLLAMA_MODELS" \
+    --env "ENABLE_WEB_SEARCH=$ENABLE_WEB_SEARCH" \
+    --env "WEB_SEARCH_ENGINE=$WEB_SEARCH_ENGINE" \
+    --env "SEARXNG_QUERY_URL=$SEARXNG_QUERY_URL" \
+    --env "WEB_SEARCH_TRUST_ENV=$WEB_SEARCH_TRUST_ENV" \
+    --env "ENABLE_PERSISTENT_CONFIG=$ENABLE_PERSISTENT_CONFIG" \
+    --env "ENABLE_VERSION_UPDATE_CHECK=$ENABLE_VERSION_UPDATE_CHECK" \
+    --env "SCARF_NO_ANALYTICS=$SCARF_NO_ANALYTICS" \
+    --env "DO_NOT_TRACK=$DO_NOT_TRACK" \
+    --env "ANONYMIZED_TELEMETRY=$ANONYMIZED_TELEMETRY" \
+    "$WEBUI_SIF" \
+    bash /app/backend/start.sh
