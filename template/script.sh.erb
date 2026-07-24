@@ -35,7 +35,12 @@ fi
 HOST_MODEL_DIR="$MODELDIR"
 HOST_DATA_DIR="$DATA_DIR"
 HOST_SEARXNG_DIR="${HOST_DATA_DIR}/searxng"
-HOST_SEARXNG_CACHE_DIR="${HOST_DATA_DIR}/searxng-cache"
+
+# Give every OOD/Slurm session its own writable SQLite cache.
+# Prefer node-local temporary storage when available.
+SEARXNG_CACHE_ID="${SLURM_JOB_ID:-$$}"
+SEARXNG_CACHE_ROOT="${TMPDIR:-${HOST_DATA_DIR}}"
+HOST_SEARXNG_CACHE_DIR="${SEARXNG_CACHE_ROOT}/searxng-cache-${USER}-${SEARXNG_CACHE_ID}"
 
 # Container-side paths
 CONTAINER_MODEL_DIR="/root/.ollama"
@@ -47,6 +52,13 @@ mkdir -p "$HOST_MODEL_DIR"
 mkdir -p "$HOST_DATA_DIR"
 mkdir -p "$HOST_SEARXNG_DIR"
 mkdir -p "$HOST_SEARXNG_CACHE_DIR"
+chmod 700 "$HOST_SEARXNG_CACHE_DIR"
+
+if [[ ! -w "$HOST_SEARXNG_CACHE_DIR" ]]; then
+    echo "❌ SearXNG cache directory is not writable: $HOST_SEARXNG_CACHE_DIR"
+    ls -ld "$HOST_SEARXNG_CACHE_DIR" || true
+    exit 1
+fi
 
 KEY_FILE="${HOST_DATA_DIR}/.webui_secret_key"
 SEARXNG_SETTINGS_FILE="${HOST_SEARXNG_DIR}/settings.yml"
@@ -77,6 +89,14 @@ cleanup() {
         echo "Stopping SearXNG process: $searxng_pid"
         kill "$searxng_pid" 2>/dev/null || true
         wait "$searxng_pid" 2>/dev/null || true
+    fi
+
+    # Remove only this session's temporary SearXNG cache.
+    if [[ -n "${HOST_SEARXNG_CACHE_DIR:-}" ]] &&
+       [[ -d "$HOST_SEARXNG_CACHE_DIR" ]] &&
+       [[ "$(basename "$HOST_SEARXNG_CACHE_DIR")" == searxng-cache-* ]]; then
+        echo "Removing SearXNG cache: $HOST_SEARXNG_CACHE_DIR"
+        rm -rf -- "$HOST_SEARXNG_CACHE_DIR" || true
     fi
 }
 
@@ -179,19 +199,31 @@ echo "🔎 SearXNG port:      $SEARXNG_PORT"
 echo "🔎 SearXNG settings:  $SEARXNG_SETTINGS_FILE"
 
 singularity exec \
-    --bind "$HOST_SEARXNG_DIR:$CONTAINER_SEARXNG_DIR" \
-    --bind "$HOST_SEARXNG_CACHE_DIR:$CONTAINER_SEARXNG_CACHE_DIR" \
+    --bind "$HOST_SEARXNG_DIR:$CONTAINER_SEARXNG_DIR:rw" \
+    --bind "$HOST_SEARXNG_CACHE_DIR:$CONTAINER_SEARXNG_CACHE_DIR:rw" \
     --env "SEARXNG_BIND_ADDRESS=127.0.0.1" \
     --env "SEARXNG_PORT=$SEARXNG_PORT" \
     --env "SEARXNG_SETTINGS_PATH=${CONTAINER_SEARXNG_DIR}/settings.yml" \
     --env "PYTHONPATH=/usr/local/searxng" \
+    --env "TMPDIR=$CONTAINER_SEARXNG_CACHE_DIR" \
+    --env "TMP=$CONTAINER_SEARXNG_CACHE_DIR" \
+    --env "TEMP=$CONTAINER_SEARXNG_CACHE_DIR" \
     "$SEARXNG_SIF" \
     /bin/sh -c "
-        cd /usr/local/searxng &&
+        set -e
+
+        echo 'Container SearXNG cache directory:'
+        ls -ld '$CONTAINER_SEARXNG_CACHE_DIR'
+
+        # Fail immediately with a clear message if the bind is not writable.
+        touch '$CONTAINER_SEARXNG_CACHE_DIR/.write-test'
+        rm -f '$CONTAINER_SEARXNG_CACHE_DIR/.write-test'
+
+        cd /usr/local/searxng
         exec /usr/local/searxng/.venv/bin/granian \
             --interface wsgi \
             --host 127.0.0.1 \
-            --port ${SEARXNG_PORT} \
+            --port '$SEARXNG_PORT' \
             searx.webapp:application
     " &
 

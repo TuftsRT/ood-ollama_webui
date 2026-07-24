@@ -10,6 +10,7 @@ cluster: "pax"
 bc_dynamic_js: true
 
 form:
+  - docs_link_block
   - disclaimer_block
   - partition
   - bc_num_hours
@@ -25,8 +26,18 @@ form:
 attributes:
 <%= generate_partition_field.indent(2) %>
 <%= generate_gpu_type_field.indent(2) %>
-<%= generate_num_cores_field.indent(2) %>
-<%= generate_num_memory_field.indent(2) %>
+<%= generate_num_cores_field(
+      extra_help: "As a rule of thumb, scale this with the size of the LLM you plan to run: " \
+                  "larger models benefit from more cores for data loading and tokenization. " \
+                  "If you are unsure, the default above is a reasonable starting point.",
+      default_value: 8
+    ).indent(2) %>
+<%= generate_num_memory_field(
+      extra_help: "A simple starting point is roughly double your selected core count, in GB " \
+                  "(for example, 8 cores suggests about 16GB memory). Larger models need " \
+                  "proportionally more.",
+      default_value: 32
+    ).indent(2) %>
 <%= generate_num_hours_field.indent(2) %>
 
   version:
@@ -59,6 +70,13 @@ attributes:
     favorites:
       - /cluster/tufts
       - /cluster/home
+
+  docs_link_block:
+    widget: text_field
+    class: "d-none"
+    skip_label: true
+    help: |
+      For full documentation on this tool, see the [AI Tools guide](https://go.tufts.edu/AITools).
 
   disclaimer_block:
     widget: text_field
