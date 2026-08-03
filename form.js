@@ -5,12 +5,12 @@ function updateGpuAvailabilityWarning() {
   }
 
   var selectedGpuType = gpuTypeSelect.value;
-
+  
   // Read unavailable_gpus data from the select's dataset or attribute
   var datasetValue = (gpuTypeSelect.dataset && gpuTypeSelect.dataset.unavailableGpus) ? gpuTypeSelect.dataset.unavailableGpus : null;
   var attrValue = datasetValue ? null : gpuTypeSelect.getAttribute('data-unavailable-gpus');
   var unavailableJson = datasetValue || attrValue;
-
+  
   if (!unavailableJson) {
     console.warn('[gpu-warning] update: no data-unavailable-gpus found');
     return;
@@ -27,10 +27,10 @@ function updateGpuAvailabilityWarning() {
   // Find or create the warning container
   var warningId = 'gpu-unavailable-warning';
   var existingWarning = document.getElementById(warningId);
-
+  
   // Check if the selected GPU type is unavailable
   var isUnavailable = unavailableMap.hasOwnProperty(selectedGpuType) && selectedGpuType !== 'none' && selectedGpuType !== '';
-
+  
   try {
     console.log('[gpu-warning] update:', {
       selectedGpuType: selectedGpuType,
@@ -38,11 +38,11 @@ function updateGpuAvailabilityWarning() {
       unavailableMap: unavailableMap
     });
   } catch (_) {}
-
+  
   if (isUnavailable) {
     var gpuLabel = unavailableMap[selectedGpuType];
     var warningMessage = 'All nodes with ' + gpuLabel + ' GPUs are currently DOWN or DRAINED. Your job will remain queued until nodes become available.';
-
+    
     if (existingWarning) {
       // Update existing warning message
       var messageSpan = existingWarning.querySelector('.gpu-warning-message');
@@ -62,28 +62,28 @@ function updateGpuAvailabilityWarning() {
       warning.className = 'alert alert-danger alert-dismissible fade show';
       warning.setAttribute('role', 'alert');
       warning.style.marginTop = '10px';
-
+      
       var content = document.createElement('span');
       content.className = 'gpu-warning-message';
       var strong = document.createElement('strong');
       strong.textContent = 'Warning: ';
       content.appendChild(strong);
       content.appendChild(document.createTextNode(warningMessage));
-
+      
       var closeButton = document.createElement('button');
       closeButton.type = 'button';
       closeButton.className = 'btn-close';
       closeButton.setAttribute('data-bs-dismiss', 'alert');
       closeButton.setAttribute('aria-label', 'Close');
-
+      
       // Add manual click handler as fallback
       closeButton.addEventListener('click', function() {
         warning.style.display = 'none';
       });
-
+      
       warning.appendChild(content);
       warning.appendChild(closeButton);
-
+      
       // Insert warning after the GPU type select's form group (Bootstrap 5 uses .mb-3)
       var formGroup = gpuTypeSelect.closest('.mb-3') || gpuTypeSelect.closest('.form-group');
       if (formGroup && formGroup.parentNode) {
@@ -311,7 +311,7 @@ function updateCoresForPartition() {
   var partitionSelect = document.getElementById('batch_connect_session_context_partition');
   var gpuTypeSelect = document.getElementById('batch_connect_session_context_gpu_type');
   var coresInput = document.getElementById('batch_connect_session_context_num_cores');
-
+  
   if (!partitionSelect || !coresInput) {
     console.warn('[cores] update: missing partition or cores input element');
     return;
@@ -319,13 +319,13 @@ function updateCoresForPartition() {
 
   var selectedPartition = partitionSelect.value;
   var selectedGpuType = gpuTypeSelect ? gpuTypeSelect.value : 'none';
-
+  
   // Read partition_gpu_max_cores data from the cores input's dataset or attribute
   var datasetValue = (coresInput.dataset && coresInput.dataset.partitionGpuMaxCores) ? coresInput.dataset.partitionGpuMaxCores : null;
   var attrValue = datasetValue ? null : coresInput.getAttribute('data-partition-gpu-max-cores');
   var optionsSource = datasetValue ? 'input-dataset' : (attrValue ? 'input-attribute' : null);
   var optionsJson = datasetValue || attrValue;
-
+  
   if (!optionsJson) {
     console.warn('[cores] update: no data-partition-gpu-max-cores found');
     return;
@@ -350,7 +350,7 @@ function updateCoresForPartition() {
   } else if (map['all'] && map['all']['any']) {
     maxCores = map['all']['any'];
   }
-
+  
   try {
     console.log('[cores] update: start', {
       selectedPartition: selectedPartition,
@@ -369,22 +369,20 @@ function updateCoresForPartition() {
 
   // Update max attribute
   coresInput.setAttribute('max', maxCores);
-
+  
   // If current value exceeds new max, adjust it
   if (currentValue > maxCores) {
     coresInput.value = maxCores;
     try { console.log('[cores] update: adjusted value from', currentValue, 'to', maxCores); } catch (_) {}
   }
 
-  // Update help text to show partition+GPU specific max, preserving any app-specific
-  // extra guidance from data-extra-help instead of clobbering it.
+  // Update help text to show partition+GPU specific max
   var helpText = coresInput.parentElement.querySelector('.form-text, .help-block');
   if (helpText) {
-    var coresExtraHelp = (coresInput.dataset && coresInput.dataset.extraHelp) || coresInput.getAttribute('data-extra-help') || '';
-    helpText.textContent = 'Number of CPU cores/threads to allocate. Max varies by partition and GPU type (Maximum: ' + maxCores + ' cores).' + (coresExtraHelp ? ' ' + coresExtraHelp : '');
+    helpText.textContent = 'Number of CPU cores/threads to allocate. Max varies by partition and GPU type (Maximum: ' + maxCores + ' cores).';
     try { console.log('[cores] update: updated help text to show', maxCores, 'cores'); } catch (_) {}
   }
-
+  
   try { console.log('[cores] update: final max =', maxCores, ', value =', coresInput.value); } catch (_) {}
 }
 
@@ -392,7 +390,7 @@ function updateMemoryForPartition() {
   var partitionSelect = document.getElementById('batch_connect_session_context_partition');
   var gpuTypeSelect = document.getElementById('batch_connect_session_context_gpu_type');
   var memoryInput = document.getElementById('batch_connect_session_context_num_memory');
-
+  
   if (!partitionSelect || !memoryInput) {
     console.warn('[memory] update: missing partition or memory input element');
     return;
@@ -400,13 +398,13 @@ function updateMemoryForPartition() {
 
   var selectedPartition = partitionSelect.value;
   var selectedGpuType = gpuTypeSelect ? gpuTypeSelect.value : 'none';
-
+  
   // Read partition_gpu_max_memory data from the memory input's dataset or attribute
   var datasetValue = (memoryInput.dataset && memoryInput.dataset.partitionGpuMaxMemory) ? memoryInput.dataset.partitionGpuMaxMemory : null;
   var attrValue = datasetValue ? null : memoryInput.getAttribute('data-partition-gpu-max-memory');
   var optionsSource = datasetValue ? 'input-dataset' : (attrValue ? 'input-attribute' : null);
   var optionsJson = datasetValue || attrValue;
-
+  
   if (!optionsJson) {
     console.warn('[memory] update: no data-partition-gpu-max-memory found');
     return;
@@ -431,7 +429,7 @@ function updateMemoryForPartition() {
   } else if (map['all'] && map['all']['any']) {
     maxMemoryMB = map['all']['any'];
   }
-
+  
   if (!maxMemoryMB || maxMemoryMB <= 0) {
     console.warn('[memory] update: invalid max memory for partition+GPU', selectedPartition, selectedGpuType);
     return;
@@ -440,7 +438,7 @@ function updateMemoryForPartition() {
   // Convert MB to GB, flooring so we never advertise more memory than a node
   // actually has (matches the server-side .floor in resource_discovery.erb).
   var maxMemoryGB = Math.max(Math.floor(maxMemoryMB / 1024.0), 1);
-
+  
   try {
     console.log('[memory] update: start', {
       selectedPartition: selectedPartition,
@@ -455,42 +453,40 @@ function updateMemoryForPartition() {
 
   // Update max attribute
   memoryInput.setAttribute('max', maxMemoryGB);
-
+  
   // If current value exceeds new max, adjust it
   if (currentValue > maxMemoryGB) {
     memoryInput.value = maxMemoryGB;
     try { console.log('[memory] update: adjusted value from', currentValue, 'to', maxMemoryGB); } catch (_) {}
   }
 
-  // Update help text to show partition+GPU specific max, preserving any app-specific
-  // extra guidance from data-extra-help instead of clobbering it.
+  // Update help text to show partition+GPU specific max
   var helpText = memoryInput.parentElement.querySelector('.form-text, .help-block');
   if (helpText) {
-    var memoryExtraHelp = (memoryInput.dataset && memoryInput.dataset.extraHelp) || memoryInput.getAttribute('data-extra-help') || '';
-    helpText.textContent = 'Amount of memory to allocate per node in GB. Max varies by partition and GPU type (Maximum: ' + maxMemoryGB + ' GB).' + (memoryExtraHelp ? ' ' + memoryExtraHelp : '');
+    helpText.textContent = 'Amount of memory to allocate per node in GB. Max varies by partition and GPU type (Maximum: ' + maxMemoryGB + ' GB).';
     try { console.log('[memory] update: updated help text to show', maxMemoryGB, 'GB'); } catch (_) {}
   }
-
+  
   try { console.log('[memory] update: final max =', maxMemoryGB, 'GB, value =', memoryInput.value); } catch (_) {}
 }
 
 function updateHoursForPartition() {
   var partitionSelect = document.getElementById('batch_connect_session_context_partition');
   var hoursInput = document.getElementById('batch_connect_session_context_bc_num_hours');
-
+  
   if (!partitionSelect || !hoursInput) {
     console.warn('[hours] update: missing partition or hours input element');
     return;
   }
 
   var selectedPartition = partitionSelect.value;
-
+  
   // Read partition_max_hours data from the hours input's dataset or attribute
   var datasetValue = (hoursInput.dataset && hoursInput.dataset.partitionMaxHours) ? hoursInput.dataset.partitionMaxHours : null;
   var attrValue = datasetValue ? null : hoursInput.getAttribute('data-partition-max-hours');
   var optionsSource = datasetValue ? 'input-dataset' : (attrValue ? 'input-attribute' : null);
   var optionsJson = datasetValue || attrValue;
-
+  
   if (!optionsJson) {
     console.warn('[hours] update: no data-partition-max-hours found');
     return;
@@ -511,7 +507,7 @@ function updateHoursForPartition() {
   } else if (map['all']) {
     maxHours = map['all'];
   }
-
+  
   try {
     console.log('[hours] update: start', {
       selectedPartition: selectedPartition,
@@ -529,7 +525,7 @@ function updateHoursForPartition() {
 
   // Update max attribute
   hoursInput.setAttribute('max', maxHours);
-
+  
   // If current value exceeds new max, adjust it
   if (currentValue > maxHours) {
     hoursInput.value = maxHours;
@@ -542,7 +538,7 @@ function updateHoursForPartition() {
     helpText.textContent = 'Number of hours to run the job. Max varies by partition (Maximum: ' + maxHours + ' hours).';
     try { console.log('[hours] update: updated help text to show', maxHours, 'hours'); } catch (_) {}
   }
-
+  
   try { console.log('[hours] update: final max =', maxHours, ', value =', hoursInput.value); } catch (_) {}
 }
 
@@ -566,9 +562,9 @@ function initializeResourceDiscoveryForm() {
   updateMemoryForPartition();
   updateHoursForPartition();
   updateGpuAvailabilityWarning();
-
+  
   var gpuTypeSelect = document.getElementById('batch_connect_session_context_gpu_type');
-
+  
   partitionSelect.addEventListener('change', function () {
     try { console.log('[partition] change ->', partitionSelect.value); } catch (_) {}
     repopulateGpuTypesForPartition();
@@ -578,7 +574,7 @@ function initializeResourceDiscoveryForm() {
     updateHoursForPartition();
     updateGpuAvailabilityWarning();
   });
-
+  
   if (gpuTypeSelect) {
     gpuTypeSelect.addEventListener('change', function () {
       try { console.log('[gpu_type] change ->', gpuTypeSelect.value); } catch (_) {}

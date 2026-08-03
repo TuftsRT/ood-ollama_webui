@@ -36,12 +36,6 @@ HOST_MODEL_DIR="$MODELDIR"
 HOST_DATA_DIR="$DATA_DIR"
 HOST_SEARXNG_DIR="${HOST_DATA_DIR}/searxng"
 
-# Give every OOD/Slurm session its own writable SQLite cache.
-# Prefer node-local temporary storage when available.
-SEARXNG_CACHE_ID="${SLURM_JOB_ID:-$$}"
-SEARXNG_CACHE_ROOT="${TMPDIR:-${HOST_DATA_DIR}}"
-HOST_SEARXNG_CACHE_DIR="${SEARXNG_CACHE_ROOT}/searxng-cache-${USER}-${SEARXNG_CACHE_ID}"
-
 # Container-side paths
 CONTAINER_MODEL_DIR="/root/.ollama"
 CONTAINER_DATA_DIR="/app/backend/data"
@@ -51,7 +45,20 @@ CONTAINER_SEARXNG_CACHE_DIR="/var/cache/searxng"
 mkdir -p "$HOST_MODEL_DIR"
 mkdir -p "$HOST_DATA_DIR"
 mkdir -p "$HOST_SEARXNG_DIR"
-mkdir -p "$HOST_SEARXNG_CACHE_DIR"
+
+# Give every OOD/Slurm session its own clean writable SQLite cache.
+# Prefer node-local temporary storage when available.
+RUN_USER="${USER:-$(id -un)}"
+SEARXNG_CACHE_ID="${SLURM_JOB_ID:-$$}"
+SEARXNG_CACHE_ROOT="${TMPDIR:-${HOST_DATA_DIR}}"
+mkdir -p "$SEARXNG_CACHE_ROOT"
+
+if ! HOST_SEARXNG_CACHE_DIR="$(mktemp -d "${SEARXNG_CACHE_ROOT%/}/searxng-cache-${RUN_USER}-${SEARXNG_CACHE_ID}.XXXXXX")"; then
+    echo "❌ Could not create SearXNG cache directory under: $SEARXNG_CACHE_ROOT"
+    ls -ld "$SEARXNG_CACHE_ROOT" || true
+    exit 1
+fi
+
 chmod 700 "$HOST_SEARXNG_CACHE_DIR"
 
 if [[ ! -w "$HOST_SEARXNG_CACHE_DIR" ]]; then
@@ -208,24 +215,42 @@ singularity exec \
     --env "TMPDIR=$CONTAINER_SEARXNG_CACHE_DIR" \
     --env "TMP=$CONTAINER_SEARXNG_CACHE_DIR" \
     --env "TEMP=$CONTAINER_SEARXNG_CACHE_DIR" \
+    --env "XDG_CACHE_HOME=$CONTAINER_SEARXNG_CACHE_DIR" \
     "$SEARXNG_SIF" \
-    /bin/sh -c "
-        set -e
+    /bin/sh <<'SEARXNG_START' &
+set -e
 
-        echo 'Container SearXNG cache directory:'
-        ls -ld '$CONTAINER_SEARXNG_CACHE_DIR'
+echo "Container SearXNG cache directory:"
+ls -ld "$TMPDIR"
 
-        # Fail immediately with a clear message if the bind is not writable.
-        touch '$CONTAINER_SEARXNG_CACHE_DIR/.write-test'
-        rm -f '$CONTAINER_SEARXNG_CACHE_DIR/.write-test'
+# Fail immediately with a clear message if the bind is not writable by SQLite.
+touch "$TMPDIR/.write-test"
+rm -f "$TMPDIR/.write-test"
+/usr/local/searxng/.venv/bin/python - <<'PY'
+import os
+import sqlite3
 
-        cd /usr/local/searxng
-        exec /usr/local/searxng/.venv/bin/granian \
-            --interface wsgi \
-            --host 127.0.0.1 \
-            --port '$SEARXNG_PORT' \
-            searx.webapp:application
-    " &
+db_path = os.path.join(os.environ["TMPDIR"], ".write-test.sqlite")
+conn = sqlite3.connect(db_path)
+conn.execute("create table t(x)")
+conn.execute("insert into t values (1)")
+conn.commit()
+conn.close()
+
+for suffix in ("", "-wal", "-shm"):
+    try:
+        os.remove(db_path + suffix)
+    except FileNotFoundError:
+        pass
+PY
+
+cd /usr/local/searxng
+exec /usr/local/searxng/.venv/bin/granian \
+    --interface wsgi \
+    --host 127.0.0.1 \
+    --port "$SEARXNG_PORT" \
+    searx.webapp:application
+SEARXNG_START
 
 searxng_pid=$!
 
